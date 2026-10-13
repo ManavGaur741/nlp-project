@@ -1,0 +1,37 @@
+PRIYA SHARMA
+Email: priya.sharma@example.com | GitHub: github.com/priya-sharma-dev
+
+OBJECTIVE
+Final-year B.Tech Computer Science student passionate about data science and
+building machine learning models that solve real problems.
+
+EDUCATION
+B.Tech in Computer Science and Engineering, 2022–2026
+CGPA: 8.6/10
+
+TECHNICAL SKILLS
+Languages: Python, Java, SQL
+Libraries: Pandas, NumPy, Scikit-learn, Matplotlib, NLTK
+Tools: Git, Jupyter Notebook, VS Code
+Concepts: Machine learning, data analysis, data visualization, statistics
+
+PROJECTS
+Movie Review Sentiment Analysis
+- Built a text classification model using NLTK and scikit-learn to classify
+  IMDb reviews as positive or negative with 87% accuracy.
+- Performed text preprocessing including tokenization, stopword removal and
+  TF-IDF feature extraction.
+
+House Price Prediction
+- Trained regression models (linear regression, random forest) on a Kaggle
+  dataset; tuned hyperparameters using cross-validation.
+- Created data visualizations with Matplotlib to explain feature importance.
+
+INTERNSHIP
+Data Analyst Intern, TechNova Solutions (Summer 2025)
+- Cleaned and analysed sales data using Python and SQL.
+- Built weekly dashboards and reports for the business team.
+
+CERTIFICATIONS
+- Machine Learning Specialization (Coursera)
+- Python for Data Science (NPTEL)

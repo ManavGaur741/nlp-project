@@ -1,0 +1,28 @@
+Job Title: Junior Machine Learning Engineer (NLP)
+
+About the role
+We are looking for a Junior Machine Learning Engineer to join our NLP team.
+You will build and deploy natural language processing models that power
+search and recommendation features used by millions of users.
+
+Responsibilities
+- Design, train and evaluate machine learning models for text classification,
+  named entity recognition and semantic search.
+- Preprocess large text datasets and build feature pipelines.
+- Fine-tune transformer models such as BERT using PyTorch or TensorFlow.
+- Deploy models as REST APIs using Docker and cloud platforms (AWS or GCP).
+- Collaborate with data engineers and product teams; write clean, tested Python code.
+- Query and analyse training data using SQL and Python.
+
+Requirements
+- Bachelor's degree in Computer Science or a related field.
+- Strong programming skills in Python.
+- Hands-on experience with scikit-learn, NLTK or spaCy.
+- Familiarity with deep learning frameworks (PyTorch or TensorFlow).
+- Understanding of NLP concepts: tokenization, embeddings, TF-IDF, transformers.
+- Experience with SQL and Git.
+
+Nice to have
+- Experience with Hugging Face Transformers.
+- Knowledge of Docker, Kubernetes and MLOps practices.
+- Published projects on GitHub or Kaggle.
