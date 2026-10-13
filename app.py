@@ -830,14 +830,18 @@ def main():
                 sem_sim = semantic_similarity(current_resume, current_jd)
 
             st.write("5. Calling backend analysis contract & synthesizing insights...")
-            # Backend contract adherence
+            # Backend contract adherence (authoritative backend in analysis_api.py)
             if HAS_BACKEND_API and backend_analyze_resume is not None:
                 try:
-                    api_result = backend_analyze_resume(
-                        resume_text=current_resume,
-                        job_description=current_jd,
-                        include_semantic=use_semantic,
-                    )
+                    if use_semantic:
+                        os.environ["RESUME_MATCHER_SEMANTIC"] = "1"
+                    else:
+                        os.environ["RESUME_MATCHER_SEMANTIC"] = "0"
+                    api_result = backend_analyze_resume(current_resume, current_jd)
+                except (ValueError, TypeError) as input_err:
+                    status.update(label="Validation error", state="error")
+                    st.error(str(input_err))
+                    return
                 except Exception as e:
                     st.warning(f"Backend API call exception: {e}. Falling back to pipeline calculation.")
                     api_result = {}
@@ -861,6 +865,9 @@ def main():
                 "matched_skills": api_result.get("matched_skills", matched_kws),
                 "missing_skills": api_result.get("missing_skills", missing_kws),
                 "suggestions": api_result.get("suggestions", []),
+                "semantic_available": api_result.get("semantic_available", (use_semantic and sem_sim is not None)),
+                "scoring_method": api_result.get("scoring_method", "tfidf+semantic" if (use_semantic and sem_sim is not None) else "tfidf"),
+                "skill_coverage_available": api_result.get("skill_coverage_available", True),
             }
 
             st.session_state["analysis_results"] = final_result
@@ -936,13 +943,18 @@ def main():
         )
 
     with col_m2:
-        if semantic_score is not None:
+        sem_available = res.get("semantic_available", True)
+        if semantic_score is not None and sem_available:
             sem_val_str = f"{semantic_score:.1f}%"
             sem_sub = "Dense embeddings (all-MiniLM-L6-v2) evaluating contextual meaning."
             sem_p = min(1.0, max(0.0, semantic_score / 100.0))
-        else:
+        elif not use_semantic:
             sem_val_str = "Disabled"
             sem_sub = "Semantic toggle turned off in settings."
+            sem_p = None
+        else:
+            sem_val_str = "Unavailable"
+            sem_sub = "Offline mode or semantic model not cached."
             sem_p = None
 
         st.markdown(
@@ -957,13 +969,24 @@ def main():
         )
 
     with col_m3:
+        skill_available = res.get("skill_coverage_available", True)
+        if not skill_available:
+            skill_val_str = "N/A"
+            skill_sub = "No recognized dictionary skills detected in job description."
+            skill_p = None
+        else:
+            skill_val_str = f"{skill_score:.1f}%"
+            total_skills = len(matched_skills) + len(missing_skills)
+            skill_sub = f"{len(matched_skills)} of {total_skills} extracted job requirements matched."
+            skill_p = min(1.0, skill_score / 100.0)
+
         st.markdown(
             render_metric_card(
                 title="Skill Coverage",
-                value=f"{skill_score:.1f}%",
-                subtext=f"{len(matched_skills)} of {len(matched_skills) + len(missing_skills)} extracted job requirements matched.",
+                value=skill_val_str,
+                subtext=skill_sub,
                 color_hex="#10b981",
-                progress_val=min(1.0, skill_score / 100.0),
+                progress_val=skill_p,
             ),
             unsafe_allow_html=True,
         )
@@ -980,9 +1003,10 @@ def main():
         scores_for_chart = {
             "Overall Compatibility": overall_score,
             "Lexical (TF-IDF)": tfidf_score,
-            "Skill Coverage": skill_score,
         }
-        if semantic_score is not None:
+        if res.get("skill_coverage_available", True):
+            scores_for_chart["Skill Coverage"] = skill_score
+        if semantic_score is not None and res.get("semantic_available", True):
             scores_for_chart["Semantic (Embeddings)"] = semantic_score
 
         bar_chart = create_score_breakdown_chart(scores_for_chart)
