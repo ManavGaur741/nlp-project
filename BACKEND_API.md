@@ -51,3 +51,7 @@ Run the automated offline check:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+The optional keyword-only `use_semantic=True/False` overrides the environment
+for one analysis request. The dashboard uses it to keep each session's toggle
+independent, without modifying process-wide environment variables.

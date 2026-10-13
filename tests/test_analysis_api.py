@@ -92,6 +92,15 @@ class AnalysisSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'password protected'):
             api.extract_pdf_text(output.getvalue())
 
+    def test_semantic_override_is_request_scoped(self):
+        with patch.dict(os.environ, {'RESUME_MATCHER_SEMANTIC': '1'}), patch.object(api, '_load_semantic_model', return_value=None) as loader:
+            result = api.analyze_resume('Python', 'Python', use_semantic=False)
+            loader.assert_not_called()
+            self.assertFalse(result['semantic_available'])
+            self.assertEqual(os.environ['RESUME_MATCHER_SEMANTIC'], '1')
+            api.analyze_resume('Python', 'Python', use_semantic=True)
+            loader.assert_called_once()
+
     def test_semantic_failure_is_cached(self):
         api._load_semantic_model.cache_clear()
         with patch.dict('sys.modules', {'sentence_transformers': None}):

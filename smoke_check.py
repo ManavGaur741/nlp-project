@@ -77,7 +77,7 @@ def test_app_backward_compatibility():
     tokens, stages = app.preprocess("Python machine learning engineer 2026", return_stages=True)
     assert isinstance(tokens, list), "preprocess tokens must be a list"
     assert isinstance(stages, dict), "preprocess stages must be a dict"
-    assert len(stages) == 6, "Expected 6 preprocessing stages"
+    assert len(stages) == 4, "Expected 4 authoritative preprocessing stages"
 
     print("  -> app.py backward compatibility PASSED!")
 
@@ -86,7 +86,7 @@ def test_streamlit_apptest_e2e():
     print("[3/3] Testing Streamlit AppTest end-to-end execution...")
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file("app.py", default_timeout=45)
     at.run()
     assert len(at.exception) == 0, f"Initial run exceptions: {at.exception}"
 
@@ -96,6 +96,36 @@ def test_streamlit_apptest_e2e():
     demo_buttons[0].click().run()
 
     assert len(at.exception) == 0, f"Exceptions after Load Demo: {at.exception}"
+    import analysis_api
+    result = at.session_state["analysis_results"]
+    assert result and result["overall_score"] > 0, "Demo did not produce results"
+    assert len(at.get("download_button")) == 2, "Missing exports"
+    assert len(at.get("vega_lite_chart")) + len(at.get("arrow_vega_lite_chart")) == 2, "Missing charts"
+    for profile in list(at.selectbox[0].options):
+        at.selectbox[0].select(profile).run()
+        next(b for b in at.button if b.label == "Load Demo").click().run()
+        assert not at.exception, at.exception
+        actual = at.session_state["analysis_results"]
+        expected = analysis_api.analyze_resume(at.text_area[0].value, at.text_area[1].value, use_semantic=False)
+        assert actual == expected, f"UI/backend mismatch for {profile}"
+    at.text_input(key="skill_search_query").set_value("python").run()
+    assert not at.exception
+    assert at.session_state["analysis_results"] == expected
+    next(b for b in at.button if b.label == "Clear All").click().run()
+    assert all(not area.value for area in at.text_area), "Clear did not clear widgets"
+    assert at.session_state["analysis_results"] is None
+    at.text_area[0].set_value("Python SQL")
+    at.text_area[1].set_value("Python SQL Docker")
+    next(b for b in at.button if "Analyze Resume Match" in b.label).click().run()
+    assert not at.exception
+    assert at.session_state["analysis_results"]["missing_skills"] == ["Docker"]
+    at.toggle[0].set_value(True).run()
+    next(b for b in at.button if "Analyze Resume Match" in b.label).click().run()
+    assert not at.exception, "Semantic fallback crashed UI"
+    assert at.session_state["analysis_results"] is not None
+    at.text_area[0].set_value("the and").run()
+    next(b for b in at.button if "Analyze Resume Match" in b.label).click().run()
+    assert not at.exception and at.error, "Empty vocabulary not handled"
     print("  -> Streamlit AppTest execution PASSED!")
 
 

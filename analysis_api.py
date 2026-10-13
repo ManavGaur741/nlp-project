@@ -86,8 +86,10 @@ def _load_semantic_model(model_name):
         return None
 
 
-def _semantic_similarity(resume_text, job_description):
-    if os.getenv('RESUME_MATCHER_SEMANTIC', '').lower() not in {'1', 'true', 'yes'}:
+def _semantic_similarity(resume_text, job_description, enabled=None):
+    if enabled is None:
+        enabled = os.getenv('RESUME_MATCHER_SEMANTIC', '').lower() in {'1', 'true', 'yes'}
+    if not enabled:
         return None
     model = _load_semantic_model(os.getenv('RESUME_MATCHER_MODEL', 'sentence-transformers/all-MiniLM-L6-v2'))
     if model is None:
@@ -107,7 +109,7 @@ def _semantic_similarity(resume_text, job_description):
         return None
 
 
-def analyze_resume(resume_text: str, job_description: str) -> dict:
+def analyze_resume(resume_text: str, job_description: str, *, use_semantic=None) -> dict:
     """Return JSON-compatible scores and gaps. Empty/stopword-only input scores zero.
 
     Without semantic inference: overall = 60% TF-IDF + 40% skill coverage.
@@ -128,7 +130,7 @@ def analyze_resume(resume_text: str, job_description: str) -> dict:
         result['suggestions'] = ['Provide both a readable resume and a job description containing meaningful words.']
         return result
     lexical = tfidf_similarity(resume, jd)
-    semantic = _semantic_similarity(resume, jd)
+    semantic = _semantic_similarity(resume, jd, enabled=use_semantic)
     skill = _percent(100 * len(matched) / len(required)) if required else 0.0
     text_score = lexical if semantic is None else (0.35 * lexical + 0.25 * semantic) / 0.60
     overall = 0.60 * text_score + 0.40 * skill if required else text_score

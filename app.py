@@ -5,9 +5,9 @@ Final-Year NLP Coursework Project
 
 Features:
 - Multi-Paradigm NLP Engine:
-    1. Lexical Matching: NLTK Preprocessing + TF-IDF Vectorization + Cosine Similarity
+    1. Lexical Matching: Offline Unicode Preprocessing + TF-IDF Vectorization + Cosine Similarity
     2. Semantic Matching: Dense Sentence-Transformer Embeddings (all-MiniLM-L6-v2)
-    3. Keyword Gap Analysis: Line-level TF-IDF Ranking for Skill Extraction
+    3. Skill Gap Analysis: Dictionary Matching with Multi-word Aliases
 - Executive Dashboard:
     - Circular Compatibility Gauge
     - Lexical, Semantic, and Skill Coverage Scorecards
@@ -25,174 +25,52 @@ Backend API:
 import json
 import os
 import re
-import string
-from datetime import datetime
+import math
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import altair as alt
-import nltk
 import pandas as pd
 import streamlit as st
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-from nltk.tokenize import word_tokenize
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ---------------------------------------------------------------------------
-# Backend API Integration (Contract Adherence)
-# ---------------------------------------------------------------------------
-try:
-    from analysis_api import analyze_resume as backend_analyze_resume
-    HAS_BACKEND_API = True
-except ImportError:
-    backend_analyze_resume = None
-    HAS_BACKEND_API = False
-
-# ---------------------------------------------------------------------------
-# NLP Corpus Setup & Preprocessing Constants
-# ---------------------------------------------------------------------------
-for resource, path in [
-    ("punkt", "tokenizers/punkt"),
-    ("punkt_tab", "tokenizers/punkt_tab"),
-    ("stopwords", "corpora/stopwords"),
-    ("wordnet", "corpora/wordnet"),
-]:
-    try:
-        nltk.data.find(path)
-    except LookupError:
-        try:
-            nltk.data.find(path + ".zip")
-        except LookupError:
-            nltk.download(resource, quiet=True)
-
-STOP_WORDS = set(stopwords.words("english"))
-
-DOMAIN_STOP_WORDS = {
-    "experience", "requirement", "responsibility", "role", "using", "work",
-    "nice", "strong", "skill", "knowledge", "ability", "looking", "job",
-    "title", "year", "including", "related", "field", "familiarity", "etc",
-}
-LEMMATIZER = WordNetLemmatizer()
-TOP_N_KEYWORDS = 30
+from analysis_api import (
+    analyze_resume as backend_analyze_resume, preprocess, extract_skills,
+    read_uploaded_file as backend_read_uploaded_file, _semantic_similarity,
+)
 
 
-# ===========================================================================
-# CORE NLP PIPELINE (Preserved & Exported for Full Compatibility)
-# ===========================================================================
-def preprocess(text: str, return_stages: bool = False) -> Any:
-    """
-    Clean raw text into normalized tokens.
-    Stages:
-        1. Lowercased
-        2. Punctuation & numbers removed
-        3. Tokenized
-        4. Stopwords removed
-        5. Lemmatized
-        6. Domain stopwords removed
-    """
-    stages = {}
-    text_lower = text.lower()
-    stages["1. Lowercased"] = text_lower
-
-    text_no_punct = re.sub(f"[{re.escape(string.punctuation)}]", " ", text_lower)
-    text_no_punct = re.sub(r"\d+", " ", text_no_punct)
-    stages["2. Punctuation & numbers removed"] = text_no_punct
-
-    tokens = word_tokenize(text_no_punct)
-    stages["3. Tokenized"] = tokens
-
-    tokens_no_stops = [t for t in tokens if t not in STOP_WORDS and len(t) > 1]
-    stages["4. Stopwords removed"] = tokens_no_stops
-
-    lemmatized = [LEMMATIZER.lemmatize(t) for t in tokens_no_stops]
-    stages["5. Lemmatized"] = lemmatized
-
-    final_tokens = [t for t in lemmatized if t not in DOMAIN_STOP_WORDS]
-    stages["6. Domain stopwords removed (final)"] = final_tokens
-
-    if return_stages:
-        return final_tokens, stages
-    return final_tokens
-
-
-def vectorize(resume_tokens: List[str], jd_tokens: List[str]) -> Tuple[Any, Any, TfidfVectorizer]:
-    """Convert token lists into TF-IDF document vectors."""
-    docs = [" ".join(resume_tokens), " ".join(jd_tokens)]
-    vectorizer = TfidfVectorizer(lowercase=False)
-    matrix = vectorizer.fit_transform(docs)
+def vectorize(resume_tokens, jd_tokens):
+    vectorizer = TfidfVectorizer(analyzer=lambda tokens: tokens)
+    matrix = vectorizer.fit_transform([resume_tokens, jd_tokens])
     return matrix[0], matrix[1], vectorizer
 
 
-def similarity(vec1: Any, vec2: Any) -> float:
-    """Cosine similarity between two vectors as a percentage (0–100)."""
-    score = cosine_similarity(vec1, vec2)[0][0]
-    return round(float(score) * 100, 2)
+def similarity(vec1, vec2):
+    return round(float(cosine_similarity(vec1, vec2)[0, 0]) * 100, 2)
 
 
-def keyword_gap(resume_text: str, jd_text: str, top_n: int = TOP_N_KEYWORDS) -> Tuple[List[str], List[str]]:
-    """
-    Find top JD keywords via line-level TF-IDF and partition into matched & missing.
-    """
-    jd_lines = [" ".join(preprocess(line)) for line in jd_text.splitlines()]
-    jd_lines = [line for line in jd_lines if line]
-    if not jd_lines:
-        return [], []
-
-    vectorizer = TfidfVectorizer(lowercase=False, norm=None)
-    matrix = vectorizer.fit_transform(jd_lines)
-    term_scores = matrix.sum(axis=0).A1
-    ranked = sorted(
-        zip(vectorizer.get_feature_names_out(), term_scores),
-        key=lambda x: x[1],
-        reverse=True,
-    )
-    top_jd_terms = [term for term, _ in ranked[:top_n]]
-
-    resume_vocab = set(preprocess(resume_text))
-    matched = [t for t in top_jd_terms if t in resume_vocab]
-    missing = [t for t in top_jd_terms if t not in resume_vocab]
-    return matched, missing
+def keyword_gap(resume_text, jd_text, top_n=None):
+    required, present = set(extract_skills(jd_text)), set(extract_skills(resume_text))
+    return sorted(required & present), sorted(required - present)
 
 
-@st.cache_resource(show_spinner=False)
-def load_embedding_model():
-    """Load and cache sentence-transformers model."""
-    try:
-        from sentence_transformers import SentenceTransformer
-        return SentenceTransformer("all-MiniLM-L6-v2")
-    except Exception:
-        return None
+def semantic_similarity(resume_text, jd_text):
+    return _semantic_similarity(resume_text, jd_text, enabled=True)
 
 
-def semantic_similarity(resume_text: str, jd_text: str) -> Optional[float]:
-    """Similarity based on meaning using all-MiniLM-L6-v2 sentence embeddings."""
-    model = load_embedding_model()
-    if model is None:
-        return None
-    try:
-        embeddings = model.encode([resume_text, jd_text])
-        return similarity(embeddings[0:1], embeddings[1:2])
-    except Exception:
-        return None
-
-
-def read_uploaded_file(uploaded_file) -> Tuple[str, Optional[int]]:
-    """Extract plain text and page count from an uploaded .txt or .pdf file."""
+def read_uploaded_file(uploaded_file):
     if uploaded_file is None:
         return "", None
     try:
-        if uploaded_file.name.lower().endswith(".pdf"):
-            reader = PdfReader(uploaded_file)
-            page_count = len(reader.pages)
-            pages_text = [page.extract_text() or "" for page in reader.pages]
-            return "\n\n".join(pages_text), page_count
-        else:
-            content = uploaded_file.read().decode("utf-8", errors="ignore")
-            return content, 1
-    except Exception as e:
-        st.error(f"Error reading {uploaded_file.name}: {e}")
+        text = backend_read_uploaded_file(uploaded_file)
+        uploaded_file.seek(0)
+        pages = len(PdfReader(uploaded_file).pages) if uploaded_file.name.lower().endswith('.pdf') else 1
+        return text, pages
+    except ValueError as exc:
+        st.error(str(exc))
         return "", None
 
 
@@ -606,6 +484,13 @@ def main():
         if os.path.exists(senior_resume_file) and os.path.exists(sample_jd_file):
             demo_options["Senior ML (Sarah)"] = (senior_resume_file, sample_jd_file)
 
+        extra_samples = os.path.join(os.path.dirname(__file__), "demo_data", "samples")
+        demo_options.update({
+            "NLP Scientist (Jordan)": (os.path.join(extra_samples, "datascientist_resume.txt"), os.path.join(extra_samples, "python_developer.txt")),
+            "Data Engineer (Alex)": (os.path.join(extra_samples, "data_engineer_resume.txt"), os.path.join(extra_samples, "python_developer.txt")),
+            "Content Strategy Comparison": (os.path.join(extra_samples, "datascientist_resume.txt"), os.path.join(extra_samples, "content_writer.txt")),
+        })
+
         selected_demo = st.selectbox(
             "Demo Profile",
             options=list(demo_options.keys()) if demo_options else ["None available"],
@@ -622,6 +507,9 @@ def main():
                         st.session_state["resume_text_content"] = rf.read()
                     with open(j_path, "r", encoding="utf-8") as jf:
                         st.session_state["jd_text_content"] = jf.read()
+                    st.session_state["resume_text_input"] = st.session_state["resume_text_content"]
+                    st.session_state["jd_text_input"] = st.session_state["jd_text_content"]
+                    st.session_state["upload_generation"] = st.session_state.get("upload_generation", 0) + 1
                     st.session_state["trigger_auto_analyze"] = True
                     st.rerun()
                 except Exception as e:
@@ -633,6 +521,9 @@ def main():
                 st.session_state["jd_text_content"] = ""
                 st.session_state["analysis_results"] = None
                 st.session_state["stages_data"] = None
+                st.session_state["resume_text_input"] = ""
+                st.session_state["jd_text_input"] = ""
+                st.session_state["upload_generation"] = st.session_state.get("upload_generation", 0) + 1
                 st.rerun()
 
         st.divider()
@@ -641,26 +532,17 @@ def main():
         st.markdown("#### ⚙️ Pipeline Settings")
         use_semantic = st.toggle(
             "Include Semantic Score",
-            value=True,
-            help="Computes dense contextual sentence embeddings via sentence-transformers (all-MiniLM-L6-v2). Captures synonym overlap beyond exact word matches.",
-        )
-
-        top_n_keywords = st.slider(
-            "Keyword Gap Depth",
-            min_value=15,
-            max_value=50,
-            value=30,
-            step=5,
-            help="Number of top job description terms extracted via line-level TF-IDF to audit against the candidate resume.",
+            value=False,
+            help="Uses an already cached local model; automatically falls back offline. Computes dense contextual sentence embeddings via sentence-transformers (all-MiniLM-L6-v2). Captures synonym overlap beyond exact word matches.",
         )
 
         st.markdown(
             """
             <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px; margin-top: 12px; font-size: 0.8rem; color: #94a3b8;">
                 <div style="font-weight: 700; color: #cbd5e1; margin-bottom: 4px;">⚖️ Composite Weights</div>
-                <div>• Lexical (TF-IDF): <b>35%</b></div>
-                <div>• Semantic (Dense): <b>35%</b></div>
-                <div>• Skill Coverage: <b>30%</b></div>
+                <div>Offline: <b>60% lexical + 40% skills</b></div>
+                <div>With semantic: <b>35% lexical + 25% semantic + 40% skills</b></div>
+                <div>No detected JD skills: text weights renormalized.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -672,10 +554,10 @@ def main():
         st.markdown("#### 🔬 NLP Tech Stack")
         st.markdown(
             """
-            - **NLTK 3.10**: Tokenization, Stopwords, WordNet Lemmatization
-            - **Scikit-Learn 1.9**: TfidfVectorizer, Cosine Similarity
+            - **Offline preprocessing**: Unicode, skill aliases and bundled stopwords
+            - **Scikit-learn**: TfidfVectorizer, Cosine Similarity
             - **Sentence Transformers**: `all-MiniLM-L6-v2` (384-dim)
-            - **PyPDF2 3.0**: Native PDF document ingestion
+            - **pypdf**: Native PDF document ingestion
             """
         )
 
@@ -709,14 +591,16 @@ def main():
         uploaded_resume = st.file_uploader(
             "Upload Resume (.pdf or .txt)",
             type=["pdf", "txt"],
-            key="resume_file_uploader",
+            key=f"resume_file_uploader_{st.session_state.get('upload_generation', 0)}",
             help="Extracts clean text directly from PDF or text documents.",
         )
 
-        if uploaded_resume is not None:
+        if uploaded_resume is not None and st.session_state.get("last_resume_upload") != uploaded_resume.file_id:
+            st.session_state["last_resume_upload"] = uploaded_resume.file_id
             extracted_text, page_cnt = read_uploaded_file(uploaded_resume)
-            if extracted_text and extracted_text != st.session_state["resume_text_content"]:
+            if extracted_text != st.session_state["resume_text_content"]:
                 st.session_state["resume_text_content"] = extracted_text
+                st.session_state["resume_text_input"] = extracted_text
                 st.toast(f"Loaded {uploaded_resume.name} ({page_cnt or 1} page(s))", icon="📄")
 
         # Live Text Editor & Statistics
@@ -748,14 +632,16 @@ def main():
         uploaded_jd = st.file_uploader(
             "Upload Job Description (.pdf or .txt)",
             type=["pdf", "txt"],
-            key="jd_file_uploader",
+            key=f"jd_file_uploader_{st.session_state.get('upload_generation', 0)}",
             help="Extracts target role requirements and qualifications.",
         )
 
-        if uploaded_jd is not None:
+        if uploaded_jd is not None and st.session_state.get("last_jd_upload") != uploaded_jd.file_id:
+            st.session_state["last_jd_upload"] = uploaded_jd.file_id
             extracted_jd_text, jd_pages = read_uploaded_file(uploaded_jd)
-            if extracted_jd_text and extracted_jd_text != st.session_state["jd_text_content"]:
+            if extracted_jd_text != st.session_state["jd_text_content"]:
                 st.session_state["jd_text_content"] = extracted_jd_text
+                st.session_state["jd_text_input"] = extracted_jd_text
                 st.toast(f"Loaded {uploaded_jd.name}", icon="📋")
 
         jd_val = st.text_area(
@@ -790,7 +676,7 @@ def main():
         analyze_clicked = st.button("🚀 Analyze Resume Match", type="primary", use_container_width=True)
 
     with col_btn_info:
-        st.caption("Evaluates exact lexical alignment, dense sentence semantics, and line-level skill gaps.")
+        st.caption("Evaluates exact lexical alignment, optional sentence semantics, and dictionary skill gaps.")
 
     # Check auto-trigger flag
     if st.session_state.pop("trigger_auto_analyze", False):
@@ -808,68 +694,24 @@ def main():
             return
 
         with st.status("🔬 Running NLP Pipeline...", expanded=True) as status:
-            st.write("1. Tokenizing and cleaning documents (lower, punctuation, stopwords, lemmatization)...")
-            r_tokens, r_stages = preprocess(current_resume, return_stages=True)
-            j_tokens, j_stages = preprocess(current_jd, return_stages=True)
-
-            if not r_tokens or not j_tokens:
-                status.update(label="Analysis failed: text contains insufficient tokens", state="error")
-                st.error("After preprocessing, one of the documents has no recognizable vocabulary terms remaining.")
+            st.session_state["analysis_results"] = None
+            st.write("1. Normalizing text, canonicalizing skills, tokenizing and removing stopwords...")
+            try:
+                r_tokens, r_stages = preprocess(current_resume, return_stages=True)
+                j_tokens, j_stages = preprocess(current_jd, return_stages=True)
+                if not r_tokens or not j_tokens:
+                    status.update(label="Insufficient meaningful text", state="error")
+                    st.error("Please provide meaningful resume and job description text.")
+                    return
+                st.write("2. Computing TF-IDF, skill coverage and optional cached semantic inference...")
+                final_result = backend_analyze_resume(current_resume, current_jd, use_semantic=use_semantic)
+                r_vec, j_vec, fitted_vec = vectorize(r_tokens, j_tokens)
+            except (ValueError, TypeError) as exc:
+                status.update(label="Validation error", state="error")
+                st.error(str(exc))
                 return
 
-            st.write("2. Fitting TfidfVectorizer & calculating cosine angle...")
-            r_vec, j_vec, fitted_vec = vectorize(r_tokens, j_tokens)
-            lexical_sim = similarity(r_vec, j_vec)
-
-            st.write("3. Extracting line-level TF-IDF keyword gap & skill taxonomy...")
-            matched_kws, missing_kws = keyword_gap(current_resume, current_jd, top_n=top_n_keywords)
-
-            sem_sim = None
-            if use_semantic:
-                st.write("4. Computing dense contextual sentence embeddings (all-MiniLM-L6-v2)...")
-                sem_sim = semantic_similarity(current_resume, current_jd)
-
-            st.write("5. Calling backend analysis contract & synthesizing insights...")
-            # Backend contract adherence (authoritative backend in analysis_api.py)
-            if HAS_BACKEND_API and backend_analyze_resume is not None:
-                try:
-                    if use_semantic:
-                        os.environ["RESUME_MATCHER_SEMANTIC"] = "1"
-                    else:
-                        os.environ["RESUME_MATCHER_SEMANTIC"] = "0"
-                    api_result = backend_analyze_resume(current_resume, current_jd)
-                except (ValueError, TypeError) as input_err:
-                    status.update(label="Validation error", state="error")
-                    st.error(str(input_err))
-                    return
-                except Exception as e:
-                    st.warning(f"Backend API call exception: {e}. Falling back to pipeline calculation.")
-                    api_result = {}
-            else:
-                api_result = {}
-
-            # Populate results defensively
-            tot_skills = len(matched_kws) + len(missing_kws)
-            computed_skill_score = round(len(matched_kws) / tot_skills * 100, 1) if tot_skills > 0 else 0.0
-
-            if sem_sim is not None:
-                computed_overall = round(0.35 * lexical_sim + 0.35 * sem_sim + 0.30 * computed_skill_score, 1)
-            else:
-                computed_overall = round(0.50 * lexical_sim + 0.50 * computed_skill_score, 1)
-
-            final_result = {
-                "overall_score": api_result.get("overall_score", computed_overall),
-                "tfidf_score": api_result.get("tfidf_score", lexical_sim),
-                "semantic_score": api_result.get("semantic_score", sem_sim),
-                "skill_score": api_result.get("skill_score", computed_skill_score),
-                "matched_skills": api_result.get("matched_skills", matched_kws),
-                "missing_skills": api_result.get("missing_skills", missing_kws),
-                "suggestions": api_result.get("suggestions", []),
-                "semantic_available": api_result.get("semantic_available", (use_semantic and sem_sim is not None)),
-                "scoring_method": api_result.get("scoring_method", "tfidf+semantic" if (use_semantic and sem_sim is not None) else "tfidf"),
-                "skill_coverage_available": api_result.get("skill_coverage_available", True),
-            }
-
+            st.session_state["analysis_inputs"] = (current_resume, current_jd, use_semantic)
             st.session_state["analysis_results"] = final_result
             st.session_state["stages_data"] = {
                 "resume_stages": r_stages,
@@ -882,6 +724,8 @@ def main():
     # -----------------------------------------------------------------------
     # DISPLAY RESULTS OR EMPTY STATE
     # -----------------------------------------------------------------------
+    if st.session_state.get("analysis_inputs") != (current_resume, current_jd, use_semantic):
+        st.session_state["analysis_results"] = None
     res = st.session_state["analysis_results"]
 
     if res is None:
@@ -1025,7 +869,7 @@ def main():
     col_skills_header, col_skills_filter = st.columns([2, 1])
     with col_skills_header:
         st.markdown("### 🧩 Technical Skills & Keywords Audit")
-        st.caption("Extracted via line-level TF-IDF importance ranking from the Job Description.")
+        st.caption("Extracted using complete skill names and aliases in skills.json.")
 
     with col_skills_filter:
         skill_search = st.text_input("🔍 Filter skills...", placeholder="Type to filter tags...", key="skill_search_query").lower().strip()
@@ -1078,7 +922,7 @@ def main():
     # SECTION 4: ACTIONABLE RESUME RECOMMENDATIONS
     # -----------------------------------------------------------------------
     st.markdown("### 💡 Actionable Improvement Recommendations")
-    st.caption("AI-generated feedback tailored to close the vocabulary and competency gaps.")
+    st.caption("Rule-based recommendations grounded in detected skill and vocabulary gaps.")
 
     if suggestions:
         for idx, rec in enumerate(suggestions, 1):
@@ -1103,12 +947,15 @@ def main():
 
     # JSON export payload
     json_report = {
-        "report_generated_at": datetime.utcnow().isoformat() + "Z",
+        "report_generated_at": datetime.now(timezone.utc).isoformat(),
+        "scoring_method": res["scoring_method"],
+        "semantic_available": res["semantic_available"],
+        "skill_coverage_available": res["skill_coverage_available"],
         "scores": {
             "overall_compatibility_score": overall_score,
             "tfidf_lexical_score": tfidf_score,
-            "semantic_embedding_score": semantic_score,
-            "skill_coverage_score": skill_score,
+            "semantic_embedding_score": semantic_score if res["semantic_available"] else None,
+            "skill_coverage_score": skill_score if res["skill_coverage_available"] else None,
         },
         "skills_audit": {
             "total_extracted_skills": len(matched_skills) + len(missing_skills),
@@ -1123,13 +970,13 @@ def main():
 
     # Markdown export payload
     md_report = f"""# Resume–Job Description Compatibility Report
-Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC
 
 ## 1. Executive Summary
 - **Overall Compatibility Score**: {overall_score:.1f}%
 - **Lexical Overlap (TF-IDF)**: {tfidf_score:.1f}%
-- **Semantic Similarity (Embeddings)**: {f'{semantic_score:.1f}%' if semantic_score is not None else 'N/A'}
-- **Skill Coverage**: {skill_score:.1f}% ({len(matched_skills)}/{len(matched_skills) + len(missing_skills)} skills)
+- **Semantic Similarity (Embeddings)**: {f'{semantic_score:.1f}%' if res['semantic_available'] else 'Unavailable (TF-IDF fallback)'}
+- **Skill Coverage**: {f'{skill_score:.1f}%' if res['skill_coverage_available'] else 'N/A'} ({len(matched_skills)}/{len(matched_skills) + len(missing_skills)} skills)
 
 ## 2. Skills Audit
 ### Matched Skills ({len(matched_skills)})
@@ -1188,7 +1035,7 @@ Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
         with tab_stages:
             st.markdown("#### Preprocessing Stages Breakdown")
             st.markdown(
-                "Text goes through 6 sequential cleaning stages to filter noise and preserve meaningful semantic content:"
+                "Text goes through 4 sequential cleaning stages to filter noise and preserve meaningful semantic content:"
             )
             if stages_info:
                 subcol_r, subcol_j = st.columns(2)
@@ -1245,56 +1092,40 @@ Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
                 - Euclidean distance would penalize document length discrepancies unfairly.
                 """
             )
-            st.info(f"Current Cosine Similarity: **{tfidf_score:.2f}%** (Angle $\\theta \\approx {float(pd.Series([tfidf_score]).apply(lambda x: 0)):.1f}^\\circ$)")
+            st.info(f"Current Cosine Similarity: **{tfidf_score:.2f}%** (Angle $\\theta \\approx {math.degrees(math.acos(max(0.0, min(1.0, tfidf_score / 100)))):.1f}^\\circ$)")
 
         # Tab 4: Semantic Sentence Embeddings
         with tab_semantic:
             st.markdown("#### Dense Semantic Embeddings (`all-MiniLM-L6-v2`)")
             st.markdown(
                 """
-                - **The Lexical Bottleneck**: TF-IDF requires exact string matches. `"ML engineer"` and `"machine learning developer"` share zero common tokens despite identical semantic meaning.
+                - **The Lexical Bottleneck**: TF-IDF cannot infer arbitrary paraphrases. Dictionary aliases do unify known terms such as ML and machine learning.
                 - **Dense Representation**: `all-MiniLM-L6-v2` maps raw text into a continuous 384-dimensional vector space trained to place semantically similar concepts in close proximity.
                 - **Raw Context Preservation**: Sentence transformers are fed raw natural language text (preserving stopwords and syntax) because transformer self-attention relies on word order.
                 """
             )
-            if semantic_score is not None:
+            if res.get("semantic_available", False):
                 st.success(f"Semantic Cosine Match: **{semantic_score:.1f}%**")
             else:
                 st.warning("Semantic embedding analysis was skipped in this run.")
 
-        # Tab 5: Keyword Gap Strategy
+        # Tab 5: Skill dictionary matching
         with tab_gap:
-            st.markdown("#### Line-Level TF-IDF for Skill Gap Extraction")
-            st.markdown(
-                """
-                **Why not use the 2-document corpus TF-IDF to find keywords?**
-                - In a corpus of only 2 documents (Resume + JD), any word that appears in *both* has document frequency $\\text{df}=2$.
-                - Therefore, its IDF weight drops to minimum! Skills the candidate *already possesses* (e.g. `python`, `data`) would sink to the bottom of the list and never register as matched.
-                - **Our Solution**: Treat each line of the Job Description as a mini-document. Specific skills clustered on bullet points achieve high TF-IDF, while generic terms repeated throughout get penalized.
-                """
-            )
-
-        # Tab 6: Viva Q&A & Known Limitations
+            st.markdown("#### Dictionary Skill Gap Extraction")
+            st.markdown("Canonical names and aliases in `skills.json` match complete words and phrases. "
+                        "Matched skills are the intersection of resume and JD skills; missing skills are "
+                        "the JD skills absent from the resume. Skill coverage is matched / required × 100. "
+                        "Mentions do not verify proficiency or understand negation.")
         with tab_viva:
-            st.markdown("#### 🎓 Essential Viva Q&A Cheat Sheet")
-            st.markdown(
-                """
-                **Q1: Why Lemmatization instead of Stemming?**
-                - *Stemming* cuts suffixes heuristically, often yielding non-words (e.g. `studies` → `studi`, `analyses` → `analysi`).
-                - *Lemmatization* references WordNet lexical dictionaries to return valid base lemmas (e.g. `analyses` → `analysis`), which is essential for user-facing keyword tags.
-
-                **Q2: What are the primary limitations of TF-IDF?**
-                - Loss of word order and syntax (*"no Python experience"* matches *"Python experience"*).
-                - Synonym blindness (*"NLP"* ≠ *"natural language processing"*).
-                - Inability to recognize experience seniority or importance weighting.
-
-                **Q3: Why do TF-IDF scores typically range between 20% and 45% for real resumes?**
-                - Real resumes contain diverse project details, education, and formatting not present in concise JDs. A 30%+ TF-IDF score is actually a strong indicator of vocabulary overlap in unigram space.
-
-                **Q4: How does the composite score balance lexical and semantic signals?**
-                - We apply a balanced composite: 35% Lexical (exact ATS keyword match) + 35% Semantic (conceptual alignment) + 30% Skill Coverage (essential JD requirements fulfilled).
-                """
-            )
+            st.markdown("#### 🎓 Viva Q&A & Limitations")
+            st.markdown("**Preprocessing:** Unicode normalization, alias canonicalization, tokenization and "
+                        "stopword removal; no stemming, lemmatization or corpus downloads.\n\n"
+                        "**TF-IDF:** Fit jointly on the two documents; cosine measures their vector angle.\n\n"
+                        "**Weights:** Offline: 60% lexical + 40% skills. Semantic available: 35% lexical + "
+                        "25% semantic + 40% skills. No dictionary skills: text weights renormalized.\n\n"
+                        "**Limitations:** English-oriented dictionary; negation and proficiency are not inferred; "
+                        "PDF OCR is not included. These are heuristic scores, not hiring probabilities.\n\n"
+                        "See `docs/VIVA_NOTES.md` for 24 technical questions and answers.")
 
 
 if __name__ == "__main__":

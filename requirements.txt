@@ -1,7 +1,6 @@
-# Core offline analysis and frontend. Python 3.10+ recommended.
+# Python 3.10+. No corpus/model downloads required at runtime.
 streamlit>=1.40,<2
 scikit-learn>=1.5,<2
 pypdf>=5,<7
-# Compatibility with the original app.py until the frontend branch is integrated.
-nltk>=3.8,<4
-PyPDF2>=3,<4
+altair>=5,<7
+pandas>=2.2,<4
