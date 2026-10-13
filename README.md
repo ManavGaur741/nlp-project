@@ -1,5 +1,7 @@
 # Resume–Job Description Matcher (NLP Coursework Project)
 
+**Live demo:** [Open the Streamlit app](https://nlp-project-gjwzmcdivpkazqvsxeathz.streamlit.app/)
+
 A production-grade NLP matching dashboard comparing candidate resumes with job descriptions using a multi-paradigm approach:
 
 1. **Overall Compatibility Score**: Composite metric balancing lexical, semantic, and skill coverage metrics.
