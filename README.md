@@ -1,5 +1,7 @@
 # Resume–Job Description Matcher
 
+**Live demo:** [Open the Streamlit app](https://nlp-project-gjwzmcdivpkazqvsxeathz.streamlit.app/)
+
 A locally runnable NLP coursework dashboard for comparing a resume with a job
 description. The dark Streamlit interface includes a circular compatibility
 gauge, scorecards, Altair charts, skill filters, sample loader, JSON/Markdown
