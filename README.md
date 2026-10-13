@@ -12,9 +12,22 @@ A small NLP project that compares a resume with a job description. It shows:
 ```
 app.py                     # Whole app: NLP pipeline + Streamlit UI
 requirements.txt
-samples/resume.txt         # Sample resume to test with
-samples/job_description.txt
-VIVA_CHEAT_SHEET.md        # 5 key concepts to explain
+samples/                   # Pre-packed samples for quick demo
+  - resume.txt             # Sample candidate profile (text format)
+  - job_description.txt    # Junior ML Engineer opening
+
+demo_data/samples/         # Additional structured sample data by role
+  - python_developer.jdxmd # Senior Python/NLP engineer JD
+  - datascientist_resume.md # Mid-level NLP-focused resume
+  - data_engineer_resume.txt   # ETL-pipeline-heavy profile
+  - content_writer.jdtxt       # Prompt-writing content spec
+
+VIVA_CHEAT_SHEET.md       # 5 key NLP concepts to explain live
+docs/DEMO_GUIDE.md        # Step-by-step demo walkthrough for presenters
+docs/VIVA_NOTES.md        # Detailed answers for viva-style Q&A session
+
+demo_data/scripts/        # Lightweight smoke tests and utilities
+  - smoke_test.sh         # Quick validation script
 ```
 
 ## Setup
